@@ -4,8 +4,8 @@ Benchmarks a pull request against its base commit and reports the difference as 
 
 **Entry point:** `/benchmark-pr <pr>` — the agent-facing prompt lives in
 [`.claude/skills/benchmark-pr/SKILL.md`](../.claude/skills/benchmark-pr/SKILL.md). For other agents or
-for CI, see [`INTEGRATION.md`](INTEGRATION.md). Design decisions and open gaps are in
-[`GAPS.md`](GAPS.md).
+for CI, see [`INTEGRATION.md`](INTEGRATION.md). The architecture and dataflow are in
+[`DESIGN.md`](DESIGN.md); decisions already made and open gaps are in [`GAPS.md`](GAPS.md).
 
 ## How it is split
 

@@ -89,7 +89,9 @@ def render(comparison: Comparison, caveats: List[str], notes: str = "") -> str:
     lines = [
         f"## Benchmark: PR #{comparison.pr}",
         "",
-        f"Probe `{comparison.probe}` · baseline `{comparison.baseline_ref}` → head `{comparison.head_ref}`",
+        f"Environment `{comparison.environment}` · instrument `{comparison.instrument}`",
+        "",
+        f"baseline `{comparison.baseline_ref}` → head `{comparison.head_ref}`",
         "",
         "| Outcome | Scenarios |",
         "| --- | --- |",

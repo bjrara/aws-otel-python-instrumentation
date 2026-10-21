@@ -1,11 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The benchmark plan: which probe to run, what scenarios, and which metrics matter.
+"""The benchmark plan: where to run, what to run, and which metrics matter.
+
+`environment` names a persisted environment under benchmarks/environments/. `instrument` is a path to a
+generated, throwaway module that knows what this change does -- it is not a repo component.
 
 The agent writes the plan; the runner only executes it. Both the metric specs and the scenario params
 live in the plan rather than in code, because what matters is a property of the diff and not of the
 harness -- a UDP change cares about datagram delivery, a memory fix cares about heap. Scenario params are
-free-form here and validated by the probe that consumes them. See benchmarks/GAPS.md sections A1 and A3.
+free-form here and validated by the instrument that consumes them. See benchmarks/GAPS.md sections A1 and A3.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,7 +56,8 @@ class Scenario:
 
 @dataclass
 class Plan:
-    probe: str
+    environment: str
+    instrument: str
     pr: int
     baseline_ref: str
     head_ref: str
@@ -64,6 +68,11 @@ class Plan:
     @property
     def scenario_ids(self) -> List[str]:
         return [s.id for s in self.scenarios]
+
+    def instrument_path(self, plan_path: Path) -> Path:
+        """Resolve the instrument relative to the plan, so a run directory is self-contained."""
+        candidate = Path(self.instrument)
+        return candidate if candidate.is_absolute() else (plan_path.parent / candidate).resolve()
 
 
 def _require(data: Dict[str, Any], key: str, where: str) -> Any:
@@ -90,7 +99,8 @@ def load(path: Path) -> Plan:
         raise ValueError(f"{path}: plan has no metrics")
 
     return Plan(
-        probe=str(_require(data, "probe", str(path))),
+        environment=str(_require(data, "environment", str(path))),
+        instrument=str(_require(data, "instrument", str(path))),
         pr=int(_require(data, "pr", str(path))),
         baseline_ref=str(_require(data, "baseline_ref", str(path))),
         head_ref=str(_require(data, "head_ref", str(path))),

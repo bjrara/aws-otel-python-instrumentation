@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A UDP sink standing in for the Lambda X-Ray daemon.
+"""A UDP sink standing in for a real telemetry receiver.
 
 The receive buffer is pinned so delivery rates are comparable between runs. Loss here is loss at the
 receiver's socket buffer, which is the mechanism the PR's known limitation describes; the absolute rate
@@ -14,8 +14,11 @@ from typing import Optional
 DEFAULT_RCVBUF = 212_992
 
 
-class UdpReceiver:
-    """Counts datagrams and bytes arriving on a loopback port."""
+class UdpSink:
+    """Counts datagrams and bytes arriving on a loopback port.
+
+    An environment service, not change-specific: it knows nothing about what the datagrams contain.
+    """
 
     def __init__(self, rcvbuf: int = DEFAULT_RCVBUF, host: str = "127.0.0.1") -> None:
         self._requested_rcvbuf = rcvbuf
@@ -47,7 +50,7 @@ class UdpReceiver:
         """
         return self._socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
 
-    def __enter__(self) -> "UdpReceiver":
+    def __enter__(self) -> "UdpSink":
         self._thread = threading.Thread(target=self._drain, daemon=True)
         self._thread.start()
         return self

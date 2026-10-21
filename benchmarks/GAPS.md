@@ -254,7 +254,7 @@ wrong numbers.
 **E1. macOS cannot measure this at all.** `net.inet.udp.maxdgram` defaults to **9216** bytes, so
 every datagram the splitter produces fails with `EMSGSIZE` regardless of the code under test.
 The first run reported `ok` with 0% delivery on *both* refs — a plausible-looking result that was
-purely the host. `probes/udp_export/host.py` now binary-searches the real limit, records it as
+purely the host. `environments/local_process/host.py` binary-searches the real limit, publishes it as
 `host_max_datagram_bytes`, and refuses to measure below 65,507 unless
 `params.allow_undersized_host` is set. Tier A runs in a `python:3.12-slim` container.
 
@@ -285,14 +285,46 @@ of 33 for 11 invocations. Dimension sets are now reduced with `max()` rather tha
 numerator silently clamps the shortfall to zero — it would have reported "no spans lost" regardless
 of the truth.
 
-## F. Progress
+## F. Restructure: environments vs. instruments
+
+The original split was plan-vs-probe, which bundled a reusable deployment harness together with a
+throwaway datagram counter. The boundary that matters is **infrastructure vs. instrumentation**:
+
+- **Persisted** (`benchmarks/environments/`) — where a benchmark runs. A customer provisions one once
+  and reuses it across many PRs: `local_process` (loopback sink, resource sampling, host datagram
+  limit) and `lambda_python` (layer build, deploy, invoke, logs, RED, teardown). Change-agnostic.
+- **Generated and discarded** (`results/<runid>/instrument.py`) — what one diff does. Declares
+  `REQUIRES`/`SUPPORTS`, implements `workload`/`drive`/`observe`. Never committed, never reused.
+
+Two mechanisms keep the knowledge when the instrument is thrown away:
+
+**Capabilities.** Environments publish what they can represent (`udp_datagram_bytes`,
+`real_telemetry_backend`, ...) and refuse an instrument whose `REQUIRES` they cannot meet. The macOS
+9216-byte lesson from E1 now lives in `local_process` rather than in change-specific code, so a
+regenerated instrument cannot lose it.
+
+**Conformance** (`cli conformance`). Measures one commit twice and requires every verdict to be
+neutral. A generated instrument is assumed wrong until it passes. What it caught immediately:
+
+- `delivery_rate_pct` swung **9.2 to 4.8 on identical code** — confirming E2 empirically. The earlier
+  Tier A report gave this metric an "improved" verdict it never deserved; it is now informational.
+- `export_latency_p99_ms`, `cpu_total_s` and `peak_rss_bytes` all exceeded the 5% threshold run to
+  run at these repeat counts, so they too carry no verdict.
+- A flaw in the gate itself: `both-failed` on identical refs is *consistent*, not noisy, and must
+  pass. Conformance now requires category *consistency*, not comparability.
+
+After demoting those four metrics the post-refactor report shows **0 metric regressions** and claims
+verdicts only for `export_failures`, `message_too_long` and `dropped_spans` — the things actually
+measured rather than the things that happened to move.
+
+## G. Progress
 
 **Built and verified (Tier A).** Run end to end against PR #1 (`59a7f29` -> `bcf1bfd`),
 11 scenarios, in a Linux container: 8 newly-working, 2 comparable, 1 failed on both refs.
 
 ```
 benchmarks/runner/{plan,probe,resources,compare,report,cli}.py   # repo- and PR-agnostic core
-benchmarks/probes/udp_export/{__init__,bench,receiver,spans,host}.py
+benchmarks/probes/udp_export/...   (superseded; see section F)
 benchmarks/plan/base.yaml          # optional user-written base scenarios
 benchmarks/requirements.txt
 benchmarks/INTEGRATION.md
@@ -300,7 +332,7 @@ benchmarks/INTEGRATION.md
 ```
 
 The core/probe split from A3 was pulled forward rather than deferred: PR-specific code lives in
-`benchmarks/probes/<name>/` behind `PROBE.run(scenario)`, and `Scenario.params` is free-form so the
+a per-change package behind a loader, and `Scenario.params` is free-form so the
 plan schema does not change per probe. A1 is also done — metric specs live in the plan.
 
 **Also built and verified (Tier B, as the `lambda_udp` probe).** Deploys the change to a real Lambda
@@ -309,7 +341,7 @@ end to end: deployed, invoked, collected Application Signals RED, tore down clea
 `udpbench*` resources left behind.
 
 ```
-benchmarks/probes/lambda_udp/{__init__,layer,stack,invoke,signals}.py
+benchmarks/probes/lambda_udp/...   (superseded; see section F)
 lambda-layer/sample-apps/function/benchmark_handler.py
 benchmarks/tests/test_compare.py      # 15 tests over categorisation and delta arithmetic
 benchmarks/README.md

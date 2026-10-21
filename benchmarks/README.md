@@ -10,29 +10,49 @@ for CI, see [`INTEGRATION.md`](INTEGRATION.md). Design decisions and open gaps a
 ## How it is split
 
 The agent designs the benchmark and interprets the results. The runner measures and decides nothing —
-there is **no model call anywhere in `runner/` or `probes/`**. That split is deliberate: a model
+there is **no model call anywhere in `runner/` or `environments/`**. That split is deliberate: a model
 choosing timing or sampling mid-run would make the baseline and head runs incomparable.
 
 ```
-runner/     repo- and PR-agnostic: plan model, probe loading, comparison, report, CLI
-probes/     one package per change path; owns everything specific to what is being measured
-plan/       optional hand-written base scenarios that run every time
-results/    per-run artifacts, gitignored and ephemeral
-tests/      unit tests for the comparison logic
+runner/        repo- and PR-agnostic: plan model, capabilities, comparison, report, CLI
+environments/  PERSISTED, change-agnostic: where a benchmark runs and what it can represent
+templates/     scaffold for generating an instrument
+plan/          optional hand-written base scenarios that run every time
+results/       per-run artifacts including the generated instrument; gitignored and ephemeral
+tests/         unit tests for the comparison logic
 ```
 
-A probe is selected by name from the plan, so adding one never means editing `runner/`.
+The split is **infrastructure vs. instrumentation**. An environment is provisioned once and reused
+across many PRs. An instrument knows what one diff does, is generated into the run directory, and is
+thrown away with it — code that knows about a specific change has no business accumulating in a
+harness.
 
-## Probes
+What survives a discarded instrument is the knowledge: environments publish **capabilities** and refuse
+runs they cannot represent, and `conformance` proves a fresh instrument is quiet before anyone believes
+its numbers.
 
-| Probe | Measures | Needs |
+## Environments
+
+| Environment | Represents | Needs |
 |---|---|---|
-| `udp_export` | The UDP exporter in-process against a local receiver — datagram counts, truncation, drops, latency, CPU, RSS | A Linux host. Nothing else |
-| `lambda_udp` | The same change on a real Lambda function against the real X-Ray daemon — throughput, p99, memory, Application Signals RED | AWS credentials. Creates and destroys a function, layer, role and log group |
+| `local_process` | In-process export against a loopback sink — fast and deterministic, but `real_telemetry_backend: false` | A Linux host. Nothing else |
+| `lambda_python` | A real function, real X-Ray daemon, real Application Signals | AWS credentials. Creates and destroys a function, layer, role and log group |
 
 ```bash
-python -m benchmarks.runner.cli probes   # names and the scenario params each accepts
+python -m benchmarks.runner.cli environments   # names and the capabilities each offers
 ```
+
+## Conformance
+
+A generated instrument is assumed wrong until it measures the **same commit twice** with no signal:
+
+```bash
+python -m benchmarks.runner.cli conformance --plan <plan> --distro-src <src>
+```
+
+It has already caught `delivery_rate_pct` varying 9.2 to 4.8 on identical code. The fix is to mark such
+a metric `informational` and say why in its label, not to widen the gate. A scenario that fails on both
+identical refs is consistent, not noise, and passes.
 
 ## Running it by hand
 
@@ -59,7 +79,7 @@ python -m benchmarks.runner.cli compare --plan <plan> --baseline <b.jsonl> --hea
 python -m benchmarks.runner.cli report  --plan <plan> --comparison <c.json> --out <report.md> --caveat "..."
 ```
 
-`udp_export` must run on Linux — macOS caps `net.inet.udp.maxdgram` at 9216 bytes and the probe refuses
+`local_process` must run on Linux — macOS caps `net.inet.udp.maxdgram` at 9216 bytes and the environment refuses
 to measure rather than return a number that reflects the host instead of the code:
 
 ```bash
@@ -94,7 +114,7 @@ python -m unittest discover -s benchmarks/tests -t .
 
 ## Cost and safety
 
-`udp_export` is loopback-only and touches no cloud. `lambda_udp` creates resources in
+`local_process` is loopback-only and touches no cloud. `lambda_python` creates resources in
 `us-east-1`, all named `udpbench-<runid>-<ref>-*` and tagged `benchmark-run=<runid>`; teardown asserts
 that prefix before every delete and runs in a `finally`, so an exception cannot leave a function behind.
 Nothing is given a public endpoint — the function is driven by `lambda:Invoke`. Costs are a few thousand

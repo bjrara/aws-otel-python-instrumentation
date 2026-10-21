@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .plan import HIGHER_IS_BETTER, LOWER_IS_BETTER, MetricSpec, Plan
-from .probe import ScenarioResult
+from .environment import ScenarioResult
 
 COMPARABLE = "comparable"
 NEWLY_WORKING = "newly-working"
@@ -54,7 +54,8 @@ class ScenarioComparison:
 @dataclass
 class Comparison:
     pr: int
-    probe: str
+    environment: str
+    instrument: str
     baseline_ref: str
     head_ref: str
     scenarios: List[ScenarioComparison]
@@ -138,7 +139,8 @@ def compare(
 
     return Comparison(
         pr=plan.pr,
-        probe=plan.probe,
+        environment=plan.environment,
+        instrument=plan.instrument,
         baseline_ref=plan.baseline_ref,
         head_ref=plan.head_ref,
         scenarios=comparisons,

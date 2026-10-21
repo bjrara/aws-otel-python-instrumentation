@@ -21,12 +21,13 @@ from benchmarks.runner.compare import (
     compare,
 )
 from benchmarks.runner.plan import HIGHER_IS_BETTER, INFORMATIONAL, LOWER_IS_BETTER, MetricSpec, Plan, Scenario
-from benchmarks.runner.probe import ScenarioResult
+from benchmarks.runner.environment import ScenarioResult
 
 
 def _plan(metrics=None, scenario_ids=("s1",)):
     return Plan(
-        probe="udp_export",
+        environment="local_process",
+        instrument="instrument.py",
         pr=1,
         baseline_ref="aaa",
         head_ref="bbb",

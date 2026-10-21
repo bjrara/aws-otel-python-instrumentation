@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Drives the deployed function and reads back what Lambda itself reported.
 
+Change-agnostic: it reports throughput, latency, duration and memory, and hands the function's log
+lines over untouched. Deciding which log lines mean something is the instrument's job.
+
 Throughput and latency come from concurrent lambda:Invoke rather than an HTTP endpoint, so nothing has
 to be made reachable from outside the account. Memory and duration come from the REPORT line Lambda
 writes per invocation, which is authoritative in a way a client-side measurement is not.
@@ -41,10 +44,7 @@ class InvokeOutcome:
     errors: int = 0
     wall_seconds: float = 0.0
     reports: List[Dict[str, float]] = field(default_factory=list)
-    truncation_events: int = 0
-    drop_events: int = 0
-    emsgsize_events: int = 0
-    export_error_events: int = 0
+    messages: List[str] = field(default_factory=list)
 
 
 def _percentile(values: List[float], pct: float) -> float:
@@ -114,14 +114,8 @@ def _collect_logs(stack: Stack, outcome: InvokeOutcome) -> None:
                     parsed[key] = float(found.group(1))
             if parsed:
                 outcome.reports.append(parsed)
-        if "Truncated" in message:
-            outcome.truncation_events += 1
-        if "Dropping" in message:
-            outcome.drop_events += 1
-        if "Message too long" in message:
-            outcome.emsgsize_events += 1
-        if "Error sending" in message or "Failed to export" in message:
-            outcome.export_error_events += 1
+    # Raw lines are handed to the instrument verbatim: which of them matter depends on the change
+    outcome.messages = messages
 
 
 def _fetch(logs, log_group: str) -> List[str]:
@@ -158,8 +152,5 @@ def metrics(outcome: InvokeOutcome) -> Dict[str, float]:
         "cold_starts": float(len(cold)),
         "max_memory_used_mb": max(memory_used) if memory_used else 0.0,
         "reports_seen": float(len(outcome.reports)),
-        "truncated_spans": float(outcome.truncation_events),
-        "dropped_spans": float(outcome.drop_events),
-        "message_too_long": float(outcome.emsgsize_events),
-        "export_errors": float(outcome.export_error_events),
+        "log_lines_seen": float(len(outcome.messages)),
     }

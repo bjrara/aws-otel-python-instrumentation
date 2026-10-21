@@ -11,12 +11,18 @@ Design state and open gaps: [`GAPS.md`](GAPS.md).
 The agent designs and interprets; the runner measures. The runner contains **no model call** — a model
 deciding timing or sampling mid-run would make the baseline and head runs incomparable.
 
-| Decided by the agent | Fixed in the runner |
+| Decided by the agent | Fixed in the harness |
 |---|---|
 | Which metrics matter for this diff | How a scenario is executed |
-| Which scenarios reach the new branches | Datagram/byte/latency/CPU/RSS accounting |
-| What the caveats are | Outcome categorisation and delta arithmetic |
+| Which scenarios reach the new branches | Outcome categorisation and delta arithmetic |
+| The instrument that measures them, generated per run | The environment it runs in, persisted and reused |
+| What the caveats are | Capability assertions and the conformance gate |
 | Whether to post the report | Markdown rendering |
+
+**Persisted vs. generated.** Environments under `benchmarks/environments/` are change-agnostic and
+provisioned for the long term. Instruments are generated into `results/<runid>/`, used once, and never
+committed — so the harness does not accumulate a datagram counter written for one PR. The knowledge
+that would otherwise be lost lives in the environments' capabilities and in `conformance`.
 
 ## Prompt to hand to an agent
 
@@ -29,7 +35,8 @@ deciding timing or sampling mid-run would make the baseline and head runs incomp
 ## Commands
 
 ```bash
-python -m benchmarks.runner.cli probes          # probes and the scenario params each accepts
+python -m benchmarks.runner.cli environments    # environments and the capabilities each offers
+python -m benchmarks.runner.cli conformance  --plan <plan.yaml> --distro-src <src>   # same commit twice; must be silent
 python -m benchmarks.runner.cli prepare     --ref <sha> --dir <dir>
 python -m benchmarks.runner.cli merge-plan  --generated <g.yaml> --base benchmarks/plan/base.yaml --out <plan.yaml>
 python -m benchmarks.runner.cli exec        --plan <plan.yaml> --distro-src <worktree>/aws-opentelemetry-distro/src --out <ref>.jsonl [--only id ...] [--strict]
@@ -41,13 +48,13 @@ python -m benchmarks.runner.cli report      --plan <plan.yaml> --comparison <c.j
 
 | Requirement | Why |
 |---|---|
-| Linux host or container | macOS caps `net.inet.udp.maxdgram` at 9216; the `udp_export` probe refuses to measure below 65,507 rather than return a wrong number |
-| `pip install -r benchmarks/requirements.txt` | Runner and probe deps. The distro is **not** installed — it comes from a worktree via `--distro-src` |
+| Linux host or container | macOS caps `net.inet.udp.maxdgram` at 9216; `local_process` publishes the real limit and refuses instruments requiring 65,507, rather than returning a wrong number |
+| `pip install -r benchmarks/requirements.txt` | Runner, environment and instrument deps. The distro is **not** installed — it comes from a worktree via `--distro-src` |
 | Python 3.10+ | Matches the distro's supported runtimes |
 | `gh` authenticated | Reading the PR's refs, and posting the report. Posts as the user, not as an app |
-| `udp_export` only | Loopback sockets. No AWS credentials, no network egress |
+| `local_process` only | Loopback sockets. No AWS credentials, no network egress |
 
-### Additionally for the `lambda_udp` probe
+### Additionally for the `lambda_python` environment
 
 | Requirement | Why |
 |---|---|
@@ -65,6 +72,7 @@ All under `benchmarks/results/<runid>/`, gitignored and ephemeral:
 
 | File | Contents |
 |---|---|
+| `instrument.py` | The generated instrument. Ephemeral by design — regenerate, never reuse |
 | `generated.yaml` | The agent's plan before base scenarios are merged |
 | `plan.yaml` | The plan actually executed, for both refs |
 | `baseline.jsonl`, `head.jsonl` | One JSON line per scenario, flushed as it completes |
@@ -83,23 +91,31 @@ setsid nohup python -m benchmarks.runner.cli exec ... > run.log 2>&1 &
 The agent's reasoning does not survive its session. If a session ends mid-run, a fresh agent resumes from
 `plan.yaml` plus whatever `*.jsonl` lines exist, and re-runs only the missing scenario ids with `--only`.
 
-## Adding a probe for a different change
+## Generating an instrument
 
-A probe is a package under `benchmarks/probes/<name>/` exposing a module-level `PROBE` with `run(scenario)`
-and `describe_params()`. It owns everything specific to one change path; `benchmarks/runner/` stays
-unaware of it and is never edited to add one. Scenario `params` are free-form and validated by the probe,
-so a probe for a JVM heap fix or an EC2 request path needs no change to the plan schema.
+Copy `benchmarks/templates/instrument_template.py` into the run directory and fill it in for one diff.
+It declares `REQUIRES` (capability keys) and `SUPPORTS` (environment names), and implements `workload`,
+`observe`, and `drive` for in-process environments. Then gate it with `conformance` before trusting it.
 
-Verifying that boundary against a genuinely different PR is the next piece of work — see `GAPS.md` A3.
+## Adding an environment
+
+A package under `benchmarks/environments/<name>/` exposing `ENVIRONMENT` with `capabilities()` and
+`execute(instrument, scenario, context)`, plus optional `setup`/`teardown` for anything it provisions.
+`benchmarks/runner/` is never edited to add one. Verifying this boundary against a genuinely different
+change — a JVM heap fix on EC2 — is the next piece of work; see `GAPS.md` A3.
 
 ## Verification status
 
-Both probes have been run end to end against PR #1 (`59a7f29` → `bcf1bfd`).
+Both environments have been run end to end against PR #1 (`59a7f29` → `bcf1bfd`).
 
-- `udp_export`: 11 scenarios in a `python:3.12-slim` container — 8 newly-working, 2 comparable, 1 failed
-  on both refs. With `--coverage`, four lite scenarios reach 50% of the branches in
-  `_udp_span_payload.py`.
-- `lambda_udp`: deployed, invoked, collected Application Signals RED, and tore down cleanly. Verified no
-  `udpbench*` resources remain afterwards.
+- `local_process`: 11 scenarios in a `python:3.12-slim` container — 8 newly-working, 2 comparable, 1
+  failed on both refs, 0 metric regressions. `--coverage` reaches 69.7% of the branches in
+  `_udp_span_payload.py` and 75% in `otlp_udp_exporter.py`.
+- `lambda_python`: deployed, invoked, collected Application Signals RED, tore down cleanly, and verified
+  no `udpbench*` resources remain. On an oversized batch the baseline logged 22 `EMSGSIZE` errors and
+  the head none, costing ~18% throughput and ~13% p99.
+- `conformance`: passes on all 11 scenarios with no signal between identical refs — after it forced
+  `delivery_rate_pct`, `export_latency_p99_ms`, `cpu_total_s` and `peak_rss_bytes` to be demoted to
+  informational.
 
 Unit tests cover the comparison logic: `python -m unittest discover -s benchmarks/tests -t .`

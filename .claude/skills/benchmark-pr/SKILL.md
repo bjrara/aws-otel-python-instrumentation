@@ -9,6 +9,12 @@ You design the benchmark; the runner under `benchmarks/` executes it. Keep that 
 to measure and what it means, the runner decides nothing. Never put model judgement inside a measurement
 loop — the baseline and head runs must do identical work or the comparison is worthless.
 
+Two halves meet in a run. The **environment** is persisted and change-agnostic — a customer provisions
+one once and reuses it across many PRs — and you pick one, you do not write one. The **instrument** is
+change-specific, and you *generate* it per run into the run directory; it is thrown away afterwards and
+must never be committed. Because it is generated, it is assumed wrong until a conformance run says
+otherwise.
+
 Read `benchmarks/GAPS.md` first. It records decisions already made and gaps already found; do not
 relitigate them or rediscover them.
 
@@ -42,17 +48,25 @@ meant to exercise as `file.py:start-end`. Work out from the code what input actu
 a threshold to cross, a load shape to build, a boundary to straddle — and prefer several small scenarios
 over one that tries to hit everything.
 
-Check what params the probe accepts before writing them:
+**An instrument.** Copy `benchmarks/templates/instrument_template.py` into the run directory and fill
+it in for *this diff only* — do not generalise it. It declares `REQUIRES` (capability keys the
+measurement depends on), `SUPPORTS` (environment names), and implements `workload`, `observe`, and for
+in-process environments `drive`. Read the template's rules first; they encode measurement bugs this
+harness has already shipped.
+
+Pick the environment by what the change needs measured:
 
 ```
-python -m benchmarks.runner.cli probes
+python -m benchmarks.runner.cli environments      # names and the capabilities each offers
 ```
 
-If no probe fits the change, say so and stop. Writing a new probe is real work: a probe package under
-`benchmarks/probes/<name>/` exposing `PROBE` with `run(scenario)` and `describe_params()`. Propose it and
-get agreement rather than forcing the change into a probe that measures the wrong thing.
+`local_process` is fast and deterministic but offers `real_telemetry_backend: false`, so anything that
+depends on a real receiver cannot be judged there. `lambda_python` deploys the change and costs minutes
+plus AWS resources. If no environment can represent what the change needs, say so and stop — propose a
+new environment rather than measuring in one that cannot support the claim.
 
-Write the plan to `benchmarks/results/<runid>/generated.yaml`, then fold in the user's base scenarios:
+Write the plan to `benchmarks/results/<runid>/generated.yaml` — it names `environment` and the
+`instrument` path alongside the scenarios and metrics — then fold in the user's base scenarios:
 
 ```
 python -m benchmarks.runner.cli merge-plan \
@@ -64,7 +78,22 @@ python -m benchmarks.runner.cli merge-plan \
 Generate the plan **once** and use that same file for both refs. Results are ephemeral; `results/` is
 gitignored and nothing there needs preserving.
 
-## Step 3 — Prepare both refs
+## Step 3 — Prove the instrument is quiet
+
+```
+python -m benchmarks.runner.cli conformance --plan $R/plan.yaml --distro-src <head src> --ref <headRefOid>
+```
+
+This measures **one commit twice** and requires every verdict to come back neutral. A generated
+instrument that reports differences where there are none is measuring noise or measuring the harness,
+and its real numbers would be fiction. Do not run a real benchmark until this passes.
+
+When it fails, the fix is usually to demote the offending metric to `informational` **and say why in its
+label** — not to loosen the gate. This has already caught `delivery_rate_pct` swinging 9.2 to 4.8 on
+identical code, and `export_latency_p99_ms`, `cpu_total_s` and `peak_rss_bytes` exceeding the 5%
+threshold run to run. `both-failed` on identical refs is consistent, not noise, and passes.
+
+## Step 4 — Prepare both refs
 
 ```
 python -m benchmarks.runner.cli prepare --ref <baseRefOid> --dir /tmp/bench-base
@@ -74,14 +103,14 @@ python -m benchmarks.runner.cli prepare --ref <headRefOid> --dir /tmp/bench-head
 Each prints the `--distro-src` path to use. Confirm the change is actually present in one and absent in
 the other before spending time on a run.
 
-## Step 4 — Execute
+## Step 5 — Execute
 
 Run each ref with the **same** plan. `--run-id` groups the artifacts and any cloud resources;
 `--ref-tag` labels the ref. Add `--coverage` to get branch coverage of the files your scenarios claim to
 target — that is how "cover the new branches" becomes a number instead of an intention.
 
-**`udp_export` (in-process).** Needs a host that allows 65,507 byte datagrams. **macOS caps this at
-9216** and the probe refuses to measure rather than return a wrong number, so run it in Linux:
+**`local_process` (in-process).** Needs a host that allows 65,507 byte datagrams. **macOS caps this at
+9216** and the environment refuses to measure rather than return a wrong number, so run it in Linux:
 
 ```
 docker run --rm -v "$PWD":/work -v /tmp/bench-base:/base:ro -v /tmp/bench-head:/head:ro \
@@ -95,7 +124,7 @@ docker run --rm -v "$PWD":/work -v /tmp/bench-base:/base:ro -v /tmp/bench-head:/
   '
 ```
 
-**`lambda_udp` (real Lambda).** Runs on the host, not in a container, and **creates AWS resources** — get
+**`lambda_python` (real Lambda).** Runs on the host, not in a container, and **creates AWS resources** — get
 confirmation first (see Stop and ask). One function, layer, role and log group per ref, all prefixed
 `udpbench-<runid>-<ref>` and destroyed in a `finally`. Nothing is given a public endpoint.
 
@@ -112,9 +141,9 @@ scenario waits out Application Signals ingestion. Keep the first run to one or t
 Results are written as JSON lines and flushed per scenario, so an interrupted run keeps what finished.
 For a long run, launch it detached (`setsid nohup ... &`) so it survives the terminal going away. If a
 `lambda_udp` run dies before teardown, check for leftovers:
-`python -c "from benchmarks.probes.lambda_udp import stack; print(stack.find_orphans())"`.
+`python -c "from benchmarks.environments.lambda_python import stack; print(stack.find_orphans())"`.
 
-## Step 5 — Compare and report
+## Step 6 — Compare and report
 
 ```
 python -m benchmarks.runner.cli compare --plan $R/plan.yaml --baseline $R/baseline.jsonl --head $R/head.jsonl --out $R/comparison.json
@@ -137,7 +166,7 @@ harness and must be surfaced whenever they apply:
 Then read `report.md` yourself and summarise the findings for the user — which of them are real, which
 are artefacts, and what you would do about them.
 
-## Step 6 — Publish (ask first)
+## Step 7 — Publish (ask first)
 
 Posting to a PR is public and outward-facing. **Show the user the report and get explicit agreement
 before posting.** When agreed:
@@ -150,7 +179,7 @@ This posts as the user, not as an app. Say so.
 
 ## Stop and ask
 
-- Creating AWS resources — the `lambda_udp` probe does this. Say what will be created and where, and
+- Creating AWS resources — the `lambda_python` environment does this. Say what will be created and where, and
   wait for agreement. Afterwards, confirm teardown actually removed it.
 - Posting anything to GitHub.
 - Running a privileged container, or changing a host sysctl.
@@ -160,6 +189,8 @@ This posts as the user, not as an app. Say so.
 
 - Do not use base *branch names* as the baseline.
 - Do not regenerate the plan between the baseline and head runs.
-- Do not hardcode metrics into probe code; they belong in the plan.
+- Do not hardcode metrics into the instrument; they belong in the plan.
+- Do not commit a generated instrument, and do not reuse one from a previous run.
+- Do not skip conformance because the numbers "look reasonable" — that is exactly when it catches things.
 - Do not report a delta against a failed baseline.
 - Do not present a harness-bound number as a production prediction.

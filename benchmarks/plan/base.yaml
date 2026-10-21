@@ -1,0 +1,26 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Base scenarios: hand-written cases that run on every benchmark regardless of what the diff touches.
+# Optional -- delete the file and only generated scenarios run. Ids here win over generated ids of the
+# same name, so a generated scenario can be pinned by redefining it.
+#
+# params are probe-specific; run `python -m benchmarks.runner.cli probes` to see what a probe accepts.
+scenarios:
+  - id: baseline-small-batch-lite
+    intent: A batch that comfortably fits one datagram; guards against regressing the common path.
+    repeats: 20
+    params:
+      mode: lite
+      spans: 10
+      attr_count: 2
+      attr_bytes: 128
+
+  - id: baseline-small-batch-full
+    intent: Same shape through the full SDK exporter.
+    repeats: 20
+    params:
+      mode: full
+      spans: 10
+      attr_count: 2
+      attr_bytes: 128

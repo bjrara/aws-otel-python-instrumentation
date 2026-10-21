@@ -1,0 +1,17 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Tier A dependencies. The distro itself is NOT installed -- it is put on sys.path from a worktree via
+# `exec --distro-src`, so baseline and head can be measured without reinstalling between refs.
+#
+# Only the subset the udp_export probe actually imports is pinned here, not the distro's full dependency
+# list: the probe instantiates the exporters directly rather than going through configure_lite_mode.
+# Versions match aws-opentelemetry-distro/pyproject.toml.
+pyyaml
+psutil
+coverage
+typing_extensions
+opentelemetry-api == 1.45.1
+opentelemetry-sdk == 1.45.1
+opentelemetry-exporter-otlp-proto-common == 1.45.1
+opentelemetry-instrumentation == 0.66b1

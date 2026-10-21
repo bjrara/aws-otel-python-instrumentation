@@ -140,7 +140,7 @@ scenario waits out Application Signals ingestion. Keep the first run to one or t
 
 Results are written as JSON lines and flushed per scenario, so an interrupted run keeps what finished.
 For a long run, launch it detached (`setsid nohup ... &`) so it survives the terminal going away. If a
-`lambda_udp` run dies before teardown, check for leftovers:
+`lambda_python` run dies before teardown, check for leftovers:
 `python -c "from benchmarks.environments.lambda_python import stack; print(stack.find_orphans())"`.
 
 ## Step 6 — Compare and report

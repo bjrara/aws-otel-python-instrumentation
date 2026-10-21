@@ -167,6 +167,14 @@ dimension granularities; summing `Latency` `SampleCount` across every set `ListM
 have "confirmed" a hypothesis regardless of the truth. Dimension sets are now reduced with `max()`,
 and `red_dimension_sets` records how many were found.
 
+**A plausible proxy metric can simply be wrong.** It looked as though Application Signals RED
+datapoint count would be a better delivery signal than any synthetic rate, since in lite mode those
+metrics derive from spans crossing the UDP path under test. Measured: `red_request_count` was 11 in
+*every* cell, including the baseline where the function's own logs show 22 `EMSGSIZE` errors and all
+oversized spans lost. **RED request count does not fall when spans are dropped.** It is retained only
+as a check that traffic reached Application Signals at all, and `red_datapoint_shortfall_pct` exists
+to keep that conclusion falsifiable rather than assumed.
+
 **Environmental failures look like results.** The layer build needs ECR Public authentication (`403`
 without it, `429` under load — the same registry problem behind this PR's red CI) and ~5 GB free in
 the Docker VM. `layer.py` detects both in the build output and prints the remedy rather than failing
@@ -199,7 +207,7 @@ measured before/after behaviour on a PR.
 | A measurement for a new change | Generate an instrument from `templates/instrument_template.py` into the run dir, gate it with `conformance` | anything in the repo |
 | A new place to run | A package under `environments/<name>/` exposing `ENVIRONMENT` with `capabilities()` and `execute()`, plus optional `setup`/`teardown` | `runner/` |
 
-Scenario `params` are free-form and validated by the instrument, so a probe for a JVM heap fix or an
+Scenario `params` are free-form and validated by the instrument, so an instrument for a JVM heap fix or an
 EC2 request path needs no schema change.
 
 ## What this deliberately does not do

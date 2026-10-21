@@ -57,24 +57,34 @@ identical refs is consistent, not noise, and passes.
 ## Running it by hand
 
 ```bash
-# 1. resolve the real base commit -- never a branch name, see GAPS.md A4
+# 1. resolve the real base commit -- never a branch name, see GAPS.md "Resolved" A4
 gh pr view 1 --json baseRefOid,headRefOid
 
-# 2. one worktree per ref
-python -m benchmarks.runner.cli prepare --ref <baseRefOid> --dir /tmp/bench-base
-python -m benchmarks.runner.cli prepare --ref <headRefOid> --dir /tmp/bench-head
+# 2. write the instrument and the plan into the run directory
+#    instrument: copy templates/instrument_template.py and fill it in for this diff only
+#    plan: names `environment`, the `instrument` path, scenarios and metrics
+python -m benchmarks.runner.cli environments            # pick one; check its capabilities
+cp benchmarks/templates/instrument_template.py benchmarks/results/<runid>/instrument.py
 
-# 3. write a plan, then fold in the base scenarios
+# 3. fold in the optional base scenarios and validate
 python -m benchmarks.runner.cli merge-plan \
     --generated benchmarks/results/<runid>/generated.yaml \
     --base benchmarks/plan/base.yaml \
     --out benchmarks/results/<runid>/plan.yaml
 
-# 4. measure each ref with the same plan
+# 4. one worktree per ref
+python -m benchmarks.runner.cli prepare --ref <baseRefOid> --dir /tmp/bench-base
+python -m benchmarks.runner.cli prepare --ref <headRefOid> --dir /tmp/bench-head
+
+# 5. prove the instrument is quiet BEFORE trusting any real numbers
+python -m benchmarks.runner.cli conformance --plan <plan> \
+    --distro-src /tmp/bench-head/aws-opentelemetry-distro/src --ref <headRefOid>
+
+# 6. measure each ref with the same plan and the same instrument
 python -m benchmarks.runner.cli exec --plan <plan> --distro-src <worktree>/aws-opentelemetry-distro/src \
     --run-id <runid> --ref-tag baseline --ref <baseRefOid> --out <runid>/baseline.jsonl [--coverage]
 
-# 5. compare and render
+# 7. compare and render
 python -m benchmarks.runner.cli compare --plan <plan> --baseline <b.jsonl> --head <h.jsonl> --out <c.json>
 python -m benchmarks.runner.cli report  --plan <plan> --comparison <c.json> --out <report.md> --caveat "..."
 ```
@@ -102,7 +112,7 @@ that could not run is meaningless:
 Changes under 5% are reported as neutral. Metrics marked `informational` never get a verdict.
 
 Caveats are written by the agent per run and are not decoration — they state what each number cannot be
-used for. The two that keep recurring: `udp_export`'s absolute delivery rate is bounded by the harness
+used for. The two that keep recurring: `local_process`'s absolute delivery rate is bounded by the harness
 receiver and does not predict the X-Ray daemon, and `host_max_datagram_bytes` below 65,507 invalidates
 the run entirely.
 

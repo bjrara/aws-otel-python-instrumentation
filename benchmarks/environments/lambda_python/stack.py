@@ -108,7 +108,7 @@ def create(
     environment = {
         "AWS_LAMBDA_EXEC_WRAPPER": "/opt/otel-instrument",
         "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "true",
-        # Runtime metrics are meaningless on Lambda; see benchmarks/GAPS.md B1
+        # Runtime metrics are meaningless on Lambda; see benchmarks/GAPS.md G5
         "OTEL_AWS_APPLICATION_SIGNALS_RUNTIME_ENABLED": "false",
         "OTEL_SERVICE_NAME": function_name,
     }

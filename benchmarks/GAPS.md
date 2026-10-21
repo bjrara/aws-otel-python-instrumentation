@@ -93,18 +93,18 @@ Verified by having been run, not by inspection. Reference run: PR #1, `59a7f29` 
 
 Predicted before implementation, now closed:
 
-- **Metric specs belong in the plan**, not in code — what matters is a property of the diff.
-- **Scenarios must reach the new branches**, and coverage makes that measurable.
-- **The core/instrument boundary** — adding `lambda_python` required no edit to `runner/` beyond the
-  `RunContext` + `setup`/`teardown` contract change.
-- **Baseline must come from the PR's `baseRefOid`.** Two independent ways branch names break: a PR
+- **A1 — Metric specs belong in the plan**, not in code; what matters is a property of the diff.
+- **A2 — Scenarios must reach the new branches**, and branch coverage makes that measurable.
+- **A3 — The core/instrument boundary holds** — adding `lambda_python` required no edit to `runner/`
+  beyond the `RunContext` + `setup`/`teardown` contract change.
+- **A4 — Baseline must come from the PR's `baseRefOid`.** Two independent ways branch names break: a PR
   based on a feature branch, and — as happened here — a local `main` that had drifted to contain the
   change, making `main` and `fix-udp` the same commit. Benchmarking by name would have compared
   identical code and reported "no difference".
-- **API metrics are conditional** on the change path intersecting the request path.
-- **Failure is a reported outcome**, not a runner error.
-- **Categories before arithmetic** — a percentage delta against a baseline that could not run is
-  meaningless, so `newly-working` is its own category.
+- **A5 — API metrics are conditional** on the change path intersecting the request path.
+- **A8 — Failure is a reported outcome**, not a runner error.
+- **A11 — Categories before arithmetic** — a percentage delta against a baseline that could not run
+  is meaningless, so `newly-working` is its own category.
 
 ## Open
 

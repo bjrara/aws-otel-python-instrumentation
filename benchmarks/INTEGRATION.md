@@ -64,7 +64,7 @@ python -m benchmarks.runner.cli report      --plan <plan.yaml> --comparison <c.j
 | ~5 GB free in the Docker VM | The three SAM base images. `docker builder prune -f` if the build fails with "no space left on device" |
 
 No API Gateway and no public endpoint: the function is driven by `lambda:Invoke`. If B2 (HTTP-level
-throughput) is ever added, the decided auth posture is `AWS_IAM` on the method — see `GAPS.md` C3.
+throughput) is ever added, the decided auth posture is `AWS_IAM` on the method — see the locked decisions in `GAPS.md`.
 
 ## Artifacts
 
@@ -102,7 +102,7 @@ It declares `REQUIRES` (capability keys) and `SUPPORTS` (environment names), and
 A package under `benchmarks/environments/<name>/` exposing `ENVIRONMENT` with `capabilities()` and
 `execute(instrument, scenario, context)`, plus optional `setup`/`teardown` for anything it provisions.
 `benchmarks/runner/` is never edited to add one. Verifying this boundary against a genuinely different
-change — a JVM heap fix on EC2 — is the next piece of work; see `GAPS.md` A3.
+change — a JVM heap fix on EC2 — is the next piece of work; see `GAPS.md` G7.
 
 ## Verification status
 

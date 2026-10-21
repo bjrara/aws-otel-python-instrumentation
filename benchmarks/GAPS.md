@@ -1,11 +1,12 @@
-# PR Benchmark Harness — Iteration 1 Gaps
+# PR Benchmark Harness — status and gaps
 
-Status as of **2026-10-20**. Nothing is implemented yet; this records the design, the
-decisions already made, and the open gaps so the work can be resumed.
+Status as of **2026-10-21**. The harness is built and has been run end to end against
+`bjrara/aws-otel-python-instrumentation` PR #1. This file records what is verified, what is not, and
+the findings worth not rediscovering.
 
-**Resume order:** build the Lambda/Python tier first (see [Scope](#scope)), validate it against
-`bjrara/aws-otel-python-instrumentation` PR #1, *then* work the structural gaps in section A by
-adding the Java/EC2 adapter as the second implementation.
+Sections A-E were written before implementation and are kept as the record of what was predicted
+versus what running it actually exposed. **Sections F and G describe the current state** -- read those
+first, and treat A-E as history where they conflict.
 
 ## Goal
 
@@ -14,30 +15,31 @@ report as a PR comment. Requirements as stated:
 
 | # | Requirement | Status |
 |---|---|---|
-| 1 | Benchmark against the PR, manual trigger | designed |
-| 2 | Base tests (user-predefined, optional) + dynamic tests (AI-designed for the PR) | designed; see A1/A2 |
-| 3 | Run twice — before and after the change | designed |
-| 4 | If there's an API, test throughput | designed; see A5 |
-| 5 | Compare CPU, memory, critical change-path metrics; API p99 | designed; see A1 |
-| 6 | Generate a report and publish as a comment | designed |
-| 7 | Application Signals RED + runtime metrics | designed; see B1 |
-| 8 | Record integration work (prompt/code for a coding agent) | designed, not written |
+| 1 | Benchmark against the PR, manual trigger | **done** -- `/benchmark-pr <pr>`, no automatic trigger |
+| 2 | Base tests (user-predefined, optional) + dynamic tests (AI-designed for the PR) | **done** -- `plan/base.yaml` merged with a generated plan; 11 scenarios in the verified run, 2 of them base |
+| 3 | Run twice -- before and after the change | **done** -- one worktree and one `exec` per ref; both `baseline.jsonl` and `head.jsonl` carry measured data |
+| 4 | If there's an API, test throughput | **done differently** -- API Gateway dropped by decision; throughput comes from concurrent `lambda:Invoke` (7.16 -> 5.87 req/s measured). No HTTP-level throughput |
+| 5 | Compare CPU, memory, critical change-path metrics; API p99 | **done, partly informational** -- CPU/RSS from `local_process`, max memory from Lambda `REPORT`, p99 in both. Conformance demoted CPU, RSS and p99 to informational in `local_process` because they are noisy there |
+| 6 | Generate a report and publish as a comment | **done** -- posted to PR #1 as comment `6307433353` |
+| 7 | Application Signals RED + runtime metrics | **RED done** (`Latency`/`Error`/`Fault`, request count from `SampleCount`). **Runtime metrics not built** -- meaningless on Lambda, and the EC2 source is unimplemented |
+| 8 | Record integration work (prompt/code for a coding agent) | **done** -- `.claude/skills/benchmark-pr/SKILL.md`, `INTEGRATION.md`, `DESIGN.md` |
 
 ## Scope
 
-Reference PR for iteration 1: **`bjrara/aws-otel-python-instrumentation` PR #1** —
+Reference PR: **`bjrara/aws-otel-python-instrumentation` PR #1** --
 `fix: split and truncate UDP span exports that exceed the datagram limit`, head `bcf1bfd`,
-base `main`.
+base `59a7f29` (the PR's `baseRefOid`; **not** local `main`, which had drifted to contain the change).
 
-Two tiers:
+The "Tier A / Tier B" naming below was superseded by the environment split in section F:
 
-- **Tier A (local, no AWS)** — UDP receiver on loopback with pinned `SO_RCVBUF`, drives
-  `export()` directly. Measures delivery rate, datagram count, truncation, flush latency.
-- **Tier B (deployed)** — sample app + API Gateway in AWS; throughput, p50/p90/p99,
-  Lambda duration and max memory, Application Signals RED.
+- **Tier A** is now the `local_process` environment -- loopback sink with pinned `SO_RCVBUF`, drives
+  `export()` directly. Publishes `real_telemetry_backend: false`.
+- **Tier B** is now the `lambda_python` environment -- a real function and layer per ref, driven by
+  `lambda:Invoke`. No API Gateway, no public endpoint.
 
-Matrix: `{lite, full} x {baseline, head} x scenarios` — lite and full mode are separate code
-paths in this PR, so four Tier B deployments per run.
+The planned `{lite, full} x {baseline, head}` matrix was **not** fully built: `local_process` covers
+both lite and full mode, but `lambda_python` deploys lite mode only (`lite_mode=True` is hardcoded in
+its `setup`), so two deployments per run rather than four. Full mode on real Lambda is unmeasured.
 
 ## Decisions already locked (do not relitigate)
 
@@ -54,25 +56,35 @@ paths in this PR, so four Tier B deployments per run.
 - Resources are prefixed `udpbench-<runid>-<ref>-*` and tagged `benchmark-run=<runid>`;
   teardown walks that prefix only.
 
-## Planned layout (not yet created)
+## Actual layout
+
+The layout planned here originally put everything behind per-change "probes"; section F explains why
+that boundary moved. What exists now:
 
 ```
-benchmarks/README.md
+benchmarks/README.md                 # how to run it
+benchmarks/DESIGN.md                 # architecture and dataflow diagrams
+benchmarks/INTEGRATION.md            # handing it to another agent
 benchmarks/GAPS.md                   # this file
-benchmarks/requirements.txt          # requests, psutil, coverage
-benchmarks/plan/base.yaml            # optional, user-written base tests
-benchmarks/runner/{cli,scenarios,udp_receiver,exporter_bench,
-                   api_bench,aws_stack,resources,compare,report}.py
-benchmarks/INTEGRATION.md            # handoff doc for a coding agent
-benchmarks/agent/benchmark-pr.md     # SKILL.md-shaped, droppable into .claude/skills/
-lambda-layer/sample-apps/function/benchmark_handler.py   # new; existing handler untouched
+benchmarks/requirements.txt
+benchmarks/plan/base.yaml            # optional, user-written base scenarios
+benchmarks/runner/{cli,plan,capabilities,environment,instrument,
+                   compare,report,resources}.py
+benchmarks/environments/local_process/{__init__,host,udp_sink}.py
+benchmarks/environments/lambda_python/{__init__,layer,stack,invoke,signals}.py
+benchmarks/templates/instrument_template.py
+benchmarks/tests/test_compare.py
+benchmarks/results/<runid>/          # gitignored: plan, instrument, jsonl, report
+.claude/skills/benchmark-pr/SKILL.md # the entry point
+lambda-layer/sample-apps/function/benchmark_handler.py   # existing handler untouched
 ```
 
 ---
 
-## A. Structural gaps
+## A. Structural gaps (predicted before implementation)
 
-Found by evaluating the iteration-1 design against
+Most are now resolved -- see the resolution list in section F. Found by evaluating the pre-build design
+against
 [aws-otel-java-instrumentation#1468](https://github.com/aws-observability/aws-otel-java-instrumentation/pull/1468)
 ("resolve profiler OOM bug, interning functions taking too much memory" — Java, EC2-testable,
 merged, +2045/-197 in `instrumentation/serviceevents`). The orchestration layer transferred;
@@ -135,7 +147,7 @@ Already in the design and it survived the Java evaluation. On `main`, oversized 
 with `EMSGSIZE` and deliver 0%; in #1468 the baseline OOMs. Report three categories —
 regression, improvement, newly-working — never a percentage delta against a crash.
 
-## B. Unverified assumptions
+## B. Assumptions, and what testing did to them
 
 **B1. Is Application Signals RED datapoint completeness a valid dropped-datagram proxy? — tested, NO.**
 The hypothesis was that because lite-mode RED derives from spans crossing the UDP path under test,
@@ -174,7 +186,7 @@ configurable settle wait before `GetMetricData`, not a sleep buried in the code.
 Memory size, runtime, and architecture must be pinned identically across refs, and cold starts
 warmed out or measured separately — otherwise CPU/memory deltas are noise.
 
-## C. Environment and access gaps
+## C. Environment and access gaps (C3 decided; C1 still open)
 
 **C1. No scoped deploy role.** Current credentials are
 `arn:aws:iam::633750930120:user/k8s-admin` with `AdministratorAccess` attached directly.
@@ -246,7 +258,7 @@ Useful identifiers: agent space `c031e16b-4437-4c5f-a458-fc59beb84bb0`, GitHub s
 `95faa2f2-336a-4733-b7fc-a36f4140619a`. Reading `capabilities` on an association requires
 botocore >= 1.43.116 (1.42.92 renders the release-management config as `SDK_UNKNOWN_MEMBER`).
 
-## E. Findings from running Tier A
+## E. Findings from running it (historical names: Tier A = local_process)
 
 Discovered by executing the harness, not by designing it. Both would have produced confidently
 wrong numbers.
@@ -316,50 +328,61 @@ neutral. A generated instrument is assumed wrong until it passes. What it caught
 After demoting those four metrics the post-refactor report shows **0 metric regressions** and claims
 verdicts only for `export_failures`, `message_too_long` and `dropped_spans` — the things actually
 measured rather than the things that happened to move.
+## G. Current state
 
-## G. Progress
+Everything below is verified by having been run, not by inspection. Reference run: PR #1,
+`59a7f29` -> `bcf1bfd`.
 
-**Built and verified (Tier A).** Run end to end against PR #1 (`59a7f29` -> `bcf1bfd`),
-11 scenarios, in a Linux container: 8 newly-working, 2 comparable, 1 failed on both refs.
+### Verified
 
-```
-benchmarks/runner/{plan,probe,resources,compare,report,cli}.py   # repo- and PR-agnostic core
-benchmarks/probes/udp_export/...   (superseded; see section F)
-benchmarks/plan/base.yaml          # optional user-written base scenarios
-benchmarks/requirements.txt
-benchmarks/INTEGRATION.md
-.claude/skills/benchmark-pr/SKILL.md   # the entry point: /benchmark-pr <pr>
-```
+| What | Evidence |
+|---|---|
+| Before/after measurement | One worktree and one `exec` per ref; `baseline.jsonl` and `head.jsonl` both populated |
+| `local_process` environment | 11 scenarios in a `python:3.12-slim` container: 8 newly-working, 2 comparable, 1 failed on both, 0 metric regressions |
+| `lambda_python` environment | Three real functions created and destroyed (CloudTrail `CreateFunction`/`DeleteFunction` at 16:49, 16:53, 16:58 on 2026-10-20). Baseline logged 22 `EMSGSIZE`, head none, at ~18% throughput and ~13% p99 |
+| Conformance gate | PASS on all 11 scenarios after forcing four metrics to informational |
+| Branch coverage | 69.7% of `_udp_span_payload.py`, 75% of `otlp_udp_exporter.py`, 38.9% of `opentelemetry_lite_sdk.py` |
+| Teardown | `find_orphans()` returns empty after every run |
+| Comparison logic | 15 unit tests |
+| Publishing | PR #1 comment `6307433353` |
 
-The core/probe split from A3 was pulled forward rather than deferred: PR-specific code lives in
-a per-change package behind a loader, and `Scenario.params` is free-form so the
-plan schema does not change per probe. A1 is also done — metric specs live in the plan.
+### Resolved from section A
 
-**Also built and verified (Tier B, as the `lambda_udp` probe).** Deploys the change to a real Lambda
-function and drives it with `lambda:Invoke` — no API Gateway, nothing with a public endpoint. Run
-end to end: deployed, invoked, collected Application Signals RED, tore down cleanly with no
-`udpbench*` resources left behind.
+A1 (metric specs live in the plan), A2 (branch coverage makes it measurable), A3 (the boundary moved
+and was validated -- adding `lambda_python` needed no edit to `runner/` beyond the contract change),
+A4 (`baseRefOid`, not branch names), A5 (API Gateway dropped; throughput from `lambda:Invoke`),
+A8 (crash/failure is a reported category), A11 (categories before arithmetic), C3 (`AWS_IAM` decided
+if HTTP throughput is ever added).
 
-```
-benchmarks/probes/lambda_udp/...   (superseded; see section F)
-lambda-layer/sample-apps/function/benchmark_handler.py
-benchmarks/tests/test_compare.py      # 15 tests over categorisation and delta arithmetic
-benchmarks/README.md
-```
+### Open
 
-Branch coverage is wired into `exec --coverage` and reports per-file branch coverage for the files a
-plan's scenarios target, so A2's "cover the branches" is now measurable. Four lite scenarios reach
-50% of the branches in `_udp_span_payload.py`.
+**G1. `lambda_python` has no conformance run behind it.** Its throughput and p99 deltas are therefore
+directional only -- nothing has shown them to exceed run-to-run noise, and `local_process` taught us
+that four metrics there looked meaningful and were not. This is the most misleading gap on the list,
+because the Lambda numbers are the ones most likely to be quoted. Fixing it means tolerating two more
+deployments per conformance run.
 
-The probe contract gained `RunContext` plus optional `setup`/`teardown`, because Tier B needs
-per-ref deployment around the scenario loop. `exec` calls teardown in a `finally` so an exception
-cannot leave a deployed function running. This validated the A3 boundary: adding `lambda_udp`
-required no edit to `benchmarks/runner/` beyond that contract change.
+**G2. Full mode is unmeasured on real Lambda.** `lambda_python.setup` hardcodes `lite_mode=True`
+(`__init__.py:50`), so only the lite path is exercised there. `local_process` covers both. The planned
+`{lite, full} x {baseline, head}` matrix is therefore half-built.
 
-**Resolved.** A1, A3, A4, A5 (API metrics: dropped API Gateway entirely; throughput and p99 now come
-from concurrent `lambda:Invoke`), A8 for this probe, C3 (decided: `AWS_IAM` if B2 is ever built).
+**G3. No example instrument ships.** Generated instruments are gitignored by design, so a fresh agent
+has `templates/instrument_template.py` and the SKILL rules but nothing concrete to pattern-match.
+Either commit one as a documented example or have the skill generate-and-conformance-check on first
+run.
 
-**Still not built.** HTTP-level throughput through API Gateway (B2 — deliberately dropped). The EC2
-runtime-metric source, so `OTEL_AWS_APPLICATION_SIGNALS_RUNTIME_ENABLED` metrics remain unexercised.
-A6, A7, A9, A10 stay open and are best addressed by building a probe for a genuinely different
-change, which is what would really test the abstraction.
+**G4. No preflight command.** A missing prerequisite surfaces mid-run rather than up front. The ECR
+Public token expiring after ~12h is the likeliest; `layer.py` prints the remedy in its error, so it is
+self-diagnosing but not early.
+
+**G5. EC2 runtime metrics unbuilt.** `OTEL_AWS_APPLICATION_SIGNALS_RUNTIME_ENABLED` metrics
+(`process.runtime.*.memory`, `*.gc_count`, `*.thread_count`, `system.network.connections`) remain
+unexercised. Meaningless on Lambda; needs an EC2 environment.
+
+**G6. HTTP-level throughput.** Deliberately dropped with API Gateway. Not a defect, recorded so it is
+not mistaken for one.
+
+**G7. The abstraction has only been tested on one change.** A6, A7, A9 and A10 stay open until an instrument and environment pair
+are built for something genuinely different -- the Java/EC2 heap fix in
+[aws-otel-java-instrumentation#1468](https://github.com/aws-observability/aws-otel-java-instrumentation/pull/1468)
+is the intended second case.

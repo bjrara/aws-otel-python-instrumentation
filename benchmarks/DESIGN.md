@@ -138,6 +138,49 @@ no verdict. Conformance forces metrics into this category when they prove unstab
 0% → 100% on a truncation scenario and still refuses to call it an improvement, because that metric was
 shown unreliable in that environment.
 
+## Why the safeguards exist
+
+Each mechanism above was added after a measurement lied. They are recorded here rather than in a gap
+tracker because they are not gaps — they are the reasons the persisted code looks the way it does.
+
+**The host can silently be the wrong environment.** macOS defaults `net.inet.udp.maxdgram` to 9216
+bytes, so every datagram the splitter produces fails with `EMSGSIZE` regardless of the code under
+test. The first run reported `ok` with 0% delivery on *both* refs — a plausible-looking result that
+was purely the host. Hence `local_process` publishes `udp_datagram_bytes` from a binary-search probe,
+and refuses an instrument requiring more.
+
+**A stand-in receiver bounds the number it is supposed to measure.** The in-process delivery rate came
+out ~5% against the PR's reported 89–98%. Two causes: `net.core.rmem_max` silently caps `SO_RCVBUF`
+(8 MB requested, 425,984 granted), and the sink is a single Python thread that cannot drain 50 × 48 KB
+fast enough — delivery stayed ~5% even with 8.76 datagrams of headroom. Hence
+`real_telemetry_backend: false`, and `rcvbuf_datagram_headroom` is recorded so a reader can tell a
+result from an artefact.
+
+**Metrics that look meaningful can be noise.** Conformance found `delivery_rate_pct` swinging 9.2 →
+4.8 on identical code, and `export_latency_p99_ms`, `cpu_total_s` and `peak_rss_bytes` all exceeding
+the 5% threshold run to run. Before the gate existed, a report called one of those a 26.9%
+improvement. Hence the gate, and hence `informational` as a first-class direction.
+
+**Aggregated telemetry can double-count.** Application Signals publishes the same metric at several
+dimension granularities; summing `Latency` `SampleCount` across every set `ListMetrics` returned gave
+11 invocations a request count of 33. That silently clamped a shortfall metric to zero, which would
+have "confirmed" a hypothesis regardless of the truth. Dimension sets are now reduced with `max()`,
+and `red_dimension_sets` records how many were found.
+
+**Environmental failures look like results.** The layer build needs ECR Public authentication (`403`
+without it, `429` under load — the same registry problem behind this PR's red CI) and ~5 GB free in
+the Docker VM. `layer.py` detects both in the build output and prints the remedy rather than failing
+opaquely. First build 190s; the second ref 24s on cache.
+
+**Measurement conditions have to be pinned.** Lambda CPU scales with configured memory, so memory
+size, runtime and architecture are fixed across refs and cold starts are warmed out and reported
+separately. Application Signals aggregates on 1-minute boundaries with ingestion lag, so the settle
+wait is an explicit parameter rather than a sleep buried in the code.
+
+One more reason this exists at all: AWS DevOps Agent reviews the diff but will not benchmark it, and
+its automated PR review is private-repository-only — so for a public fork there was no path to
+measured before/after behaviour on a PR.
+
 ## Trust boundaries
 
 - The in-process environment binds loopback only. Nothing listens on an external interface.
